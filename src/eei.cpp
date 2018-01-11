@@ -146,6 +146,8 @@ namespace HeraVM {
       HERA_DEBUG << "useGas " << gas << "\n";
 
       takeGas(gas);
+      // FIXME: this may overflow
+      takeGas(gas * memory.size() / memory_page_size * memory_cost);
 
       return Literal();
     }

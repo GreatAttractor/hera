@@ -113,6 +113,9 @@ private:
   struct evm_message const& msg;
   std::vector<uint8_t> lastReturnData;
   ExecutionResult & result;
+
+  static constexpr unsigned memory_page_size = 65536;
+  static constexpr unsigned memory_cost = 1;
 };
 
 struct GasSchedule {
