@@ -154,6 +154,9 @@ namespace HeraVM {
       HERA_DEBUG << "getGasLeft\n";
 
       static_assert(is_same<decltype(result.gasLeft), uint64_t>::value, "uint64_t type expected");
+
+      takeGas(GasSchedule::stepGas1);
+
       return Literal(result.gasLeft);
     }
 
@@ -163,6 +166,8 @@ namespace HeraVM {
       HERA_DEBUG << "getAddress " << hex << resultOffset << dec << "\n";
 
       storeUint160(msg.destination, resultOffset);
+
+      takeGas(GasSchedule::stepGas1);
 
       return Literal();
     }
@@ -175,6 +180,8 @@ namespace HeraVM {
 
       evm_address address = loadUint160(addressOffset);
       evm_uint256be result;
+
+      takeGas(GasSchedule::balance);
       context->fn_table->get_balance(&result, context, &address);
       storeUint128(result, resultOffset);
 
@@ -188,6 +195,8 @@ namespace HeraVM {
       HERA_DEBUG << "getBlockHash " << hex << number << " " << resultOffset << dec << "\n";
 
       evm_uint256be blockhash;
+
+      takeGas(GasSchedule::blockhash);
       context->fn_table->get_block_hash(&blockhash, context, number);
       storeUint256(blockhash, resultOffset);
 
@@ -196,6 +205,9 @@ namespace HeraVM {
 
     if (import->base == Name("getCallDataSize")) {
       HERA_DEBUG << "callDataSize\n";
+
+      takeGas(GasSchedule::stepGas1);
+
       return Literal(static_cast<uint32_t>(msg.input_size));
     }
 
@@ -206,6 +218,7 @@ namespace HeraVM {
 
       HERA_DEBUG << "callDataCopy " << hex << resultOffset << " " << dataOffset << " " << length << dec << "\n";
 
+      takeGas(GasSchedule::stepGas2 + GasSchedule::copy * (length / 32));
       vector<uint8_t> input(msg.input_data, msg.input_data + msg.input_size);
       storeMemory(input, dataOffset, resultOffset, length);
 
@@ -217,6 +230,7 @@ namespace HeraVM {
 
       HERA_DEBUG << "getCaller " << hex << resultOffset << dec << "\n";
 
+      takeGas(GasSchedule::stepGas1);
       storeUint160(msg.sender, resultOffset);
 
       return Literal();
@@ -227,6 +241,7 @@ namespace HeraVM {
 
       HERA_DEBUG << "getCallValue " << hex << resultOffset << dec << "\n";
 
+      takeGas(GasSchedule::stepGas1);
       storeUint128(msg.value, resultOffset);
 
       return Literal();
@@ -239,6 +254,9 @@ namespace HeraVM {
 
       HERA_DEBUG << "codeCopy " << hex << resultOffset << " " << codeOffset << " " << length << dec << "\n";
 
+      heraAssert(ffs(GasSchedule::copy) + (ffs(length) - 5) <= 64, "Gas charge overflow");
+      heraAssert(numeric_limits<uint64_t>::max() - GasSchedule::stepGas2 >= GasSchedule::copy * (length / 32), "Gas charge overflow");
+      takeGas((uint64_t)ceil(GasSchedule::stepGas2 + GasSchedule::copy * (length / 32)));
       storeMemory(code, codeOffset, resultOffset, length);
 
       return Literal();
@@ -246,6 +264,8 @@ namespace HeraVM {
 
     if (import->base == Name("getCodeSize")) {
       HERA_DEBUG << "getCodeSize\n";
+
+      takeGas(GasSchedule::stepGas1);
 
       return Literal(static_cast<uint32_t>(code.size()));
     }
@@ -262,8 +282,10 @@ namespace HeraVM {
       const uint8_t *code;
       size_t code_size = context->fn_table->get_code(&code, context, &address);
 
+      heraAssert(ffs(GasSchedule::copy) + (ffs(length) - 5) <= 64, "Gas charge overflow");
+      heraAssert(numeric_limits<uint64_t>::max() - GasSchedule::extcode >= GasSchedule::copy * (length / 32), "Gas charge overflow");
+      takeGas(GasSchedule::extcode + GasSchedule::copy * (length / 32));
       // NOTE: code will be freed by the callee (client)
-
       // FIXME: optimise this so not vector needs to be created
       storeMemory(vector<uint8_t>(code, code + code_size), codeOffset, resultOffset, length);
 
@@ -276,6 +298,7 @@ namespace HeraVM {
       HERA_DEBUG << "getExternalCodeSize " << hex << addressOffset << dec << "\n";
 
       evm_address address = loadUint160(addressOffset);
+      takeGas(GasSchedule::extcode);
       size_t code_size = context->fn_table->get_code(NULL, context, &address);
 
       return Literal(static_cast<uint32_t>(code_size));
@@ -287,6 +310,8 @@ namespace HeraVM {
       HERA_DEBUG << "getBlockCoinbase " << hex << resultOffset << dec << "\n";
 
       evm_tx_context tx_context;
+
+      takeGas(GasSchedule::stepGas1);
       context->fn_table->get_tx_context(&tx_context, context);
       storeUint160(tx_context.block_coinbase, resultOffset);
 
@@ -299,6 +324,8 @@ namespace HeraVM {
       HERA_DEBUG << "getBlockDifficulty " << hex << offset << dec << "\n";
 
       evm_tx_context tx_context;
+
+      takeGas(GasSchedule::stepGas1);
       context->fn_table->get_tx_context(&tx_context, context);
       storeUint256(tx_context.block_difficulty, offset);
 
@@ -309,9 +336,12 @@ namespace HeraVM {
       HERA_DEBUG << "getBlockGasLimit\n";
 
       evm_tx_context tx_context;
+
+      takeGas(GasSchedule::stepGas1);
       context->fn_table->get_tx_context(&tx_context, context);
 
       static_assert(is_same<decltype(tx_context.block_gas_limit), int64_t>::value, "int64_t type expected");
+
       return Literal(tx_context.block_gas_limit);
     }
 
@@ -321,6 +351,8 @@ namespace HeraVM {
       HERA_DEBUG << "getTxGasPrice " << hex << valueOffset << dec << "\n";
 
       evm_tx_context tx_context;
+
+      takeGas(GasSchedule::stepGas1);
       context->fn_table->get_tx_context(&tx_context, context);
       storeUint128(tx_context.tx_gas_price, valueOffset);
 
@@ -335,7 +367,6 @@ namespace HeraVM {
       HERA_DEBUG << "log " << hex << dataOffset << " " << length << " " << numberOfTopics << dec << "\n";
 
       heraAssert(!(msg.flags & EVM_STATIC), "\"log\" attempted in static mode");
-
       heraAssert(numberOfTopics <= 4, "Too many topics specified");
 
       evm_uint256be topics[numberOfTopics];
@@ -347,6 +378,10 @@ namespace HeraVM {
       vector<uint8_t> data(length);
       loadMemory(dataOffset, data, length);
 
+      heraAssert(ffs(length) + ffs(GasSchedule::logData) <= 64, "Gas charge overflow");
+      heraAssert(numeric_limits<uint64_t>::max() - (GasSchedule::log + GasSchedule::logTopic * numberOfTopics) >= length * GasSchedule::logData,
+                 "Gas charge overflow");
+      takeGas(GasSchedule::log + (length * GasSchedule::logData) + (GasSchedule::logTopic * numberOfTopics));
       context->fn_table->emit_log(context, &msg.destination, data.data(), length, topics, numberOfTopics);
 
       return Literal();
@@ -356,9 +391,12 @@ namespace HeraVM {
       HERA_DEBUG << "getBlockNumber\n";
 
       evm_tx_context tx_context;
+
+      takeGas(GasSchedule::stepGas1);
       context->fn_table->get_tx_context(&tx_context, context);
 
       static_assert(is_same<decltype(tx_context.block_number), int64_t>::value, "int64_t type expected");
+
       return Literal(tx_context.block_number);
     }
 
@@ -366,9 +404,12 @@ namespace HeraVM {
       HERA_DEBUG << "getBlockTimestamp\n";
 
       evm_tx_context tx_context;
+
+      takeGas(GasSchedule::stepGas1);
       context->fn_table->get_tx_context(&tx_context, context);
 
       static_assert(is_same<decltype(tx_context.block_timestamp), int64_t>::value, "int64_t type expected");
+
       return Literal(tx_context.block_timestamp);
     }
 
@@ -378,6 +419,8 @@ namespace HeraVM {
       HERA_DEBUG << "getTxOrigin " << hex << resultOffset << dec << "\n";
 
       evm_tx_context tx_context;
+
+      takeGas(GasSchedule::stepGas1);
       context->fn_table->get_tx_context(&tx_context, context);
       storeUint160(tx_context.tx_origin, resultOffset);
 
@@ -394,8 +437,8 @@ namespace HeraVM {
 
       evm_uint256be path = loadUint256(pathOffset);
       evm_uint256be value = loadUint256(valueOffset);
-
       evm_uint256be current;
+
       context->fn_table->get_storage(&current, context, &msg.destination, &path);
 
       // We do not need to take care about the delete case (gas refund), the client does it.
@@ -417,8 +460,9 @@ namespace HeraVM {
       HERA_DEBUG << "storageLoad " << hex << pathOffset << " " << resultOffset << dec << "\n";
 
       evm_uint256be path = loadUint256(pathOffset);
-
       evm_uint256be result;
+
+      takeGas(GasSchedule::storageLoad);
       context->fn_table->get_storage(&result, context, &msg.destination, &path);
 
       storeUint256(result, resultOffset);
@@ -444,6 +488,9 @@ namespace HeraVM {
 
     if (import->base == Name("getReturnDataSize")) {
       HERA_DEBUG << "getReturnDataSize\n";
+
+      takeGas(GasSchedule::stepGas1);
+
       return Literal(static_cast<uint32_t>(lastReturnData.size()));
     }
 
@@ -454,6 +501,7 @@ namespace HeraVM {
 
       HERA_DEBUG << "returnDataCopy " << hex << dataOffset << " " << offset << " " << size << dec << "\n";
 
+      takeGas(GasSchedule::stepGas2);
       storeMemory(lastReturnData, offset, dataOffset, size);
 
       return Literal();
@@ -470,7 +518,7 @@ namespace HeraVM {
       uint32_t valueOffset;
       uint32_t dataOffset;
       uint32_t dataLength;
-
+      
       heraAssert((msg.flags & ~EVM_STATIC) == 0, "Unknown flags not supported.");
 
       evm_message call_message;
@@ -484,7 +532,7 @@ namespace HeraVM {
         valueOffset = arguments[2].geti32();
         dataOffset = arguments[3].geti32();
         dataLength = arguments[4].geti32();
-
+        
         call_message.sender = msg.destination;
         call_message.value = loadUint128(valueOffset);
         call_message.kind = (import->base == Name("callCode")) ? EVM_CALLCODE : EVM_CALL;
@@ -497,7 +545,7 @@ namespace HeraVM {
         valueOffset = 0;
         dataOffset = arguments[2].geti32();
         dataLength = arguments[3].geti32();
-
+        
         if (import->base == Name("callDelegate")) {
           call_message.sender = msg.sender;
           call_message.value = msg.value;
@@ -516,7 +564,7 @@ namespace HeraVM {
         addressOffset << " " <<
         valueOffset << " " <<
         dataOffset << " " <<
-        dataLength << dec << "\n";
+        dataLength << " " << dec << "\n";
 
       if (dataLength) {
         vector<uint8_t> input_data(dataLength);
@@ -529,6 +577,13 @@ namespace HeraVM {
       }
 
       evm_result call_result;
+
+      if (import->base == Name("call") && !context->fn_table->account_exists(context, &call_message.destination))
+        takeGas(GasSchedule::callnewacct);
+      if (!isZeroUint256(call_message.value))
+        takeGas(GasSchedule::valuetransfer);
+      takeGas(gas);
+      takeGas(GasSchedule::call);
       context->fn_table->call(&call_result, context, &call_message);
 
       if (call_result.output_data) {
@@ -539,6 +594,9 @@ namespace HeraVM {
 
       if (call_result.release)
         call_result.release(&call_result);
+
+      /* Return unspent gas */
+      result.gasLeft += call_result.gas_left;
 
       switch (call_result.status_code) {
       case EVM_SUCCESS:
@@ -585,7 +643,11 @@ namespace HeraVM {
       create_message.flags = 0;
 
       evm_result create_result;
+     
+      takeGas(create_message.gas);
+      takeGas(GasSchedule::create);
       context->fn_table->call(&create_result, context, &create_message);
+
       if (create_result.status_code == EVM_SUCCESS) {
         storeUint160(create_result.create_address, resultOffset);
         lastReturnData.clear();
@@ -617,6 +679,9 @@ namespace HeraVM {
 
       evm_address address = loadUint160(addressOffset);
 
+      if (!context->fn_table->account_exists(context, &address))
+      	takeGas(GasSchedule::callnewacct);
+      takeGas(GasSchedule::selfdestruct);
       context->fn_table->selfdestruct(context, &msg.destination, &address);
 
       return Literal();
