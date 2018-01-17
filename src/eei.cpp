@@ -43,6 +43,11 @@ struct NullStream {
 #endif
 
 namespace HeraVM {
+  void importGlobals(std::map<Name, Literal>& globals, Module& wasm) {
+    (void)globals;
+    HERA_DEBUG() << "importGlobal " << wasm->module << " " << wasm->base << endl;
+  }
+
 #if HERA_DEBUGGING
   Literal EthereumInterface::callDebugImport(Import *import, LiteralList& arguments) {
     heraAssert(import->module == Name("debug"), "Import namespace error.");
